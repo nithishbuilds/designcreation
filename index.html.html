@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pentacle AI Image Studio</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0f1115;color:#e8e8ea;min-height:100vh;padding:24px}
+  .wrap{max-width:960px;margin:0 auto}
+  h1{font-size:26px;margin-bottom:4px}
+  .sub{color:#9a9aa3;margin-bottom:24px;font-size:14px}
+  .card{background:#181b22;border:1px solid #262a34;border-radius:12px;padding:20px;margin-bottom:20px}
+  label{display:block;font-size:13px;color:#b5b5be;margin:12px 0 6px}
+  input,textarea,select{width:100%;background:#0f1115;border:1px solid #2d3240;color:#e8e8ea;border-radius:8px;padding:10px 12px;font-size:14px;font-family:inherit}
+  textarea{min-height:110px;resize:vertical}
+  .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}
+  .keyrow{display:flex;gap:8px;align-items:center}
+  .keyrow input{flex:1}
+  button{background:#6c5ce7;color:#fff;border:0;border-radius:8px;padding:11px 18px;font-size:14px;font-weight:600;cursor:pointer}
+  button:hover{background:#5a4bd1}
+  button:disabled{opacity:.5;cursor:wait}
+  .ghost{background:#2d3240}
+  .ghost:hover{background:#3a4052}
+  .chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#9a9aa3;margin-top:8px}
+  .chk input{width:auto}
+  #status{margin-top:12px;font-size:14px;min-height:20px}
+  .err{color:#ff7675}
+  .ok{color:#55efc4}
+  #gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+  .img{background:#181b22;border:1px solid #262a34;border-radius:12px;overflow:hidden}
+  .img img{width:100%;display:block}
+  .img .meta{padding:10px;font-size:12px;color:#9a9aa3;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .img .meta span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .img a{color:#a29bfe;text-decoration:none;font-weight:600;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Pentacle AI Image Studio</h1>
+  <p class="sub">Type what you want and click Generate</p>
+
+  <div class="card" id="pwcard">
+    <label>Site password</label>
+    <input id="pw" type="password" placeholder="Enter password (if your admin set one)" autocomplete="current-password">
+  </div>
+
+  <div class="card">
+    <label>Describe the image</label>
+    <textarea id="prompt" placeholder="e.g. Premium product photo of a matte black stainless steel water bottle with a gold Pentacle logo, studio lighting, white background, ultra detailed"></textarea>
+
+    <div class="row">
+      <div>
+        <label>Model</label>
+        <select id="model">
+          <option value="gpt-image-1">gpt-image-1 (best)</option>
+          <option value="dall-e-3">dall-e-3</option>
+        </select>
+      </div>
+      <div>
+        <label>Size</label>
+        <select id="size">
+          <option value="1024x1024">Square 1024×1024</option>
+          <option value="1536x1024">Landscape 1536×1024</option>
+          <option value="1024x1536">Portrait 1024×1536</option>
+        </select>
+      </div>
+      <div>
+        <label>Quality</label>
+        <select id="quality">
+          <option value="high">Ultra / High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low (fast, cheap)</option>
+        </select>
+      </div>
+      <div>
+        <label>Number of images</label>
+        <select id="n">
+          <option>1</option><option>2</option><option>3</option><option>4</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-top:16px"><button id="go">Generate image</button></div>
+    <div id="status"></div>
+  </div>
+
+  <div id="gallery"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+};
+$('pw').value = store.get('pentacle_site_pw') || '';
+$('pw').oninput = () => store.set('pentacle_site_pw', $('pw').value);
+
+$('model').onchange = () => {
+  const d3 = $('model').value === 'dall-e-3';
+  $('size').innerHTML = d3
+    ? '<option value="1024x1024">Square 1024×1024</option><option value="1792x1024">Landscape 1792×1024</option><option value="1024x1792">Portrait 1024×1792</option>'
+    : '<option value="1024x1024">Square 1024×1024</option><option value="1536x1024">Landscape 1536×1024</option><option value="1024x1536">Portrait 1024×1536</option>';
+  $('quality').innerHTML = d3
+    ? '<option value="hd">Ultra / HD</option><option value="standard">Standard</option>'
+    : '<option value="high">Ultra / High</option><option value="medium">Medium</option><option value="low">Low (fast, cheap)</option>';
+};
+
+function setStatus(msg, cls){ $('status').className = cls || ''; $('status').textContent = msg; }
+
+async function generateOne(body){
+  const res = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  let data = {};
+  try { data = await res.json(); } catch(e) {}
+  if (!res.ok) {
+    if (res.status === 504) throw new Error('The image took too long. Try Medium quality or a smaller size.');
+    throw new Error(data.error || ('Server error ' + res.status));
+  }
+  return data.image;
+}
+
+$('go').onclick = async () => {
+  const prompt = $('prompt').value.trim();
+  if (!prompt) return setStatus('Please describe the image you want.', 'err');
+  const n = parseInt($('n').value, 10);
+  const body = { model: $('model').value, prompt, size: $('size').value, quality: $('quality').value, password: $('pw').value };
+
+  $('go').disabled = true;
+  setStatus('Generating… high quality can take 30–60 seconds.');
+  try {
+    const results = await Promise.allSettled(Array.from({length:n}, () => generateOne(body)));
+    const ok = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+    const bad = results.find(r => r.status === 'rejected');
+    ok.forEach((src, i) => {
+      const div = document.createElement('div');
+      div.className = 'img';
+      div.innerHTML = '<img alt=""><div class="meta"><span></span><a target="_blank" rel="noopener">Download</a></div>';
+      div.querySelector('img').src = src;
+      div.querySelector('span').textContent = prompt;
+      const a = div.querySelector('a');
+      a.href = src;
+      a.download = 'pentacle-' + Date.now() + '-' + (i+1) + (src.startsWith('data:image/jpeg') ? '.jpg' : '.png');
+      $('gallery').prepend(div);
+    });
+    if (ok.length && !bad) setStatus('Done ✓ ' + ok.length + ' image(s) created.', 'ok');
+    else if (ok.length) setStatus(ok.length + ' created, some failed: ' + bad.reason.message, 'err');
+    else setStatus('Error: ' + bad.reason.message, 'err');
+  } finally {
+    $('go').disabled = false;
+  }
+};
+</script>
+</body>
+</html>
